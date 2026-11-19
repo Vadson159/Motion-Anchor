@@ -1,0 +1,1 @@
+Motion Anchor wyświetla konfigurowalne znaczniki ruchu nad innymi aplikacjami podczas jazdy. Wybierz kropki, pierścienie, romby, gwiazdki, linię horyzontu lub własny obraz. Ustaw kolor, rozmiar, gęstość, rozmieszczenie, krycie i czułość. Włącz nakładkę ręcznie lub skorzystaj z opcjonalnego wykrywania jazdy przez GPS.

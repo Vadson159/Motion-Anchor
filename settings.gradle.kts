@@ -16,5 +16,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Motion sickness"
+rootProject.name = "Motion Anchor"
 include(":app")

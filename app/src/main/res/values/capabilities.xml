@@ -1,0 +1,4 @@
+<resources>
+    <bool name="accessibility_overlay_available">false</bool>
+    <bool name="quick_settings_available">false</bool>
+</resources>

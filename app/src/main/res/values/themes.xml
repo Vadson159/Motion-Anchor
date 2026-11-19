@@ -2,6 +2,13 @@
 <!-- SPDX-FileCopyrightText: 2026 David Ventura -->
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 <resources>
-
-    <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.MotionAnchor" parent="android:style/Theme.Holo.Light.NoActionBar">
+        <item name="android:windowBackground">#152E32</item>
+    </style>
+    <style name="Theme.MotionAnchor.Dark" parent="android:style/Theme.Holo.NoActionBar">
+        <item name="android:windowBackground">#0E1B1B</item>
+    </style>
+    <style name="Theme.MotionAnchor.Black" parent="Theme.MotionAnchor.Dark">
+        <item name="android:windowBackground">#000000</item>
+    </style>
 </resources>

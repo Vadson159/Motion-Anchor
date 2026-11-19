@@ -1,1 +1,1 @@
-Initial release
+First Motion Anchor release with English, Russian and Polish, dark and OLED black themes, customizable markers and images, optional GPS trip detection, and Android 4.1 compatibility.

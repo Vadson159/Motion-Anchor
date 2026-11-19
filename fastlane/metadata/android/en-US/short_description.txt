@@ -1,1 +1,1 @@
-Motion cues overlay, to prevent motion sickness
+Motion markers and a horizon overlay for vehicle rides.

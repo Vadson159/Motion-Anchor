@@ -1,1 +1,1 @@
-Motion Cues reduces motion sickness by drawing drifting dots over other apps while you ride in a car, bus, or train.
+Motion Anchor shows configurable motion markers over your other apps during a ride. Choose dots, rings, diamonds, stars, a horizon line, or your own image. Adjust the color, size, density, placement, opacity, and sensitivity. Start manually or enable optional GPS trip detection.

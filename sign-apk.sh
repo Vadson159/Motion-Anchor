@@ -17,7 +17,7 @@ KEY_ALIAS="$4"
 
 UNSIGNED_APK="app/build/outputs/apk/release/app-release-unsigned.apk"
 SIGNED_DIR="signed"
-SIGNED_APK="$SIGNED_DIR/motion-sickness-release.apk"
+SIGNED_APK="$SIGNED_DIR/motion-anchor-release.apk"
 
 SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 if [ -z "$SDK_ROOT" ] && [ -f local.properties ]; then

@@ -1,16 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-FileCopyrightText: 2026 David Ventura -->
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
 <resources>
-    <string name="app_name">Motion cues</string>
-
-    <string name="motion_cues_channel_name">Motion cues overlay</string>
-    <string name="motion_cues_notification_title">Motion cues active</string>
-    <string name="motion_cues_notification_text">Drawing motion dots over other apps</string>
-    <string name="motion_cues_notification_stop">Stop</string>
-
-    <string name="main_title">Vehicle motion cues</string>
-    <string name="main_subtitle">Reduces motion sickness by showing dots that drift with the car\'s motion.</string>
-    <string name="main_grant_overlay">Grant draw-over-apps permission</string>
-    <string name="main_start">Start cues</string>
-    <string name="main_stop">Stop cues</string>
+    <string name="app_name">Motion Anchor</string>
+    <string name="channel_name">Motion Anchor overlay</string>
+    <string name="intro">Motion markers over your other apps.</string>
+    <string name="status_off">Overlay off</string>
+    <string name="status_active">Overlay active</string>
+    <string name="status_waiting">Waiting for vehicle motion</string>
+    <string name="action_start">Start overlay</string>
+    <string name="action_stop">Stop session</string>
+    <string name="action_arm">Enable trip detection</string>
+    <string name="action_overlay">Allow display over apps</string>
+    <string name="action_notifications">Allow notifications</string>
+    <string name="section_appearance">Appearance</string>
+    <string name="section_trip">Trip and system controls</string>
+    <string name="section_language">Language</string>
+    <string name="section_preview">Preview</string>
+    <string name="style_label">Marker style</string>
+    <string name="style_dots">Dots</string>
+    <string name="style_rings">Rings</string>
+    <string name="style_diamonds">Diamonds</string>
+    <string name="style_stars">Stars</string>
+    <string name="style_horizon">Horizon line</string>
+    <string name="style_image">Custom image</string>
+    <string name="placement_label">Placement</string>
+    <string name="placement_focus">Keep the center clear</string>
+    <string name="placement_uniform">Across the screen</string>
+    <string name="color_label">Marker color</string>
+    <string name="color_white">White</string>
+    <string name="color_black">Black</string>
+    <string name="color_aqua">Mint</string>
+    <string name="color_coral">Coral</string>
+    <string name="color_gold">Gold</string>
+    <string name="color_blue">Sky blue</string>
+    <string name="color_custom">Enter a hex color</string>
+    <string name="color_invalid">Enter six hexadecimal digits, e.g. 63E6BE.</string>
+    <string name="size_label">Size</string>
+    <string name="opacity_label">Opacity</string>
+    <string name="density_label">Density</string>
+    <string name="sensitivity_label">Motion sensitivity</string>
+    <string name="slider_value">%1$s · %2$d%%</string>
+    <string name="image_choose">Choose an image</string>
+    <string name="image_replace">Replace image</string>
+    <string name="image_remove">Remove image</string>
+    <string name="image_hint">Your image is stored on this device and keeps its original colors.</string>
+    <string name="image_importing">Importing image…</string>
+    <string name="image_error">Could not import this image.</string>
+    <string name="image_remove_error">Could not remove the image.</string>
+    <string name="image_picker_error">No image picker is available.</string>
+    <string name="appearance_reset">Reset appearance</string>
+    <string name="trip_hint">Optional. Uses precise GPS speed during the current session to show markers while traveling. Location stays on the device.</string>
+    <string name="trip_location_required">Allow precise location to detect trips.</string>
+    <string name="trip_gps_required">Enable GPS to detect trips.</string>
+    <string name="session_failed">Could not start Motion Anchor.</string>
+    <string name="accessibility_title">Motion Anchor full-screen overlay</string>
+    <string name="accessibility_description">Shows Motion Anchor markers over system bars when enabled. The service does not read screen content.</string>
+    <string name="full_screen_label">Draw over system bars</string>
+    <string name="accessibility_open">Open accessibility settings</string>
+    <string name="tile_hint">Add Motion Anchor to Android Quick Settings for manual start and stop.</string>
+    <string name="language_system">System language</string>
+    <string name="permission_settings_error">Could not open system settings.</string>
+    <string name="color_value">Marker color · %1$s</string>
+    <string name="section_interface">Interface</string>
+    <string name="theme_label">App theme</string>
+    <string name="theme_system">System theme</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_black">OLED black</string>
 </resources>
