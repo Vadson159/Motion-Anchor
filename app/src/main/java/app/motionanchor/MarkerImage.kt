@@ -8,21 +8,39 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
 import android.net.Uri
+import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import java.util.concurrent.Executors
+import java.lang.ref.WeakReference
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 object MarkerImage {
     private const val FILE_NAME = "marker.png"
     private const val MAX_BYTES = 32L * 1024 * 1024
     private const val MAX_SIDE = 512
-    private val worker = Executors.newSingleThreadExecutor()
+    // One worker keeps imports and removals in order; it exits when idle.
+    private val worker = ThreadPoolExecutor(1, 1, 5L, TimeUnit.SECONDS, LinkedBlockingQueue())
+        .apply { allowCoreThreadTimeOut(true) }
+
+    // The settings preview and the overlay share one decoded bitmap (up to 1 MB). The weak
+    // reference lets it go once neither of them shows the image.
+    private var cached: WeakReference<Bitmap>? = null
+    private var cachedRevision = -1
 
     fun exists(context: Context): Boolean = File(context.filesDir, FILE_NAME).isFile
 
-    fun load(context: Context): Bitmap? =
-        BitmapFactory.decodeFile(File(context.filesDir, FILE_NAME).absolutePath)
+    /** Decodes the marker on the calling (main) thread, reusing the bitmap of the same revision. */
+    fun load(context: Context): Bitmap? {
+        val revision = AnchorSettings(context).preferences.getInt(AnchorSettings.IMAGE_REVISION, 0)
+        if (revision == cachedRevision) cached?.get()?.let { return it }
+        val bitmap = BitmapFactory.decodeFile(File(context.filesDir, FILE_NAME).absolutePath)
+        cached = bitmap?.let { WeakReference(it) }
+        cachedRevision = revision
+        return bitmap
+    }
 
     fun import(context: Context, uri: Uri, finished: (Boolean) -> Unit) {
         val app = context.applicationContext
@@ -52,13 +70,22 @@ object MarkerImage {
         }
     }
 
+    // Like use(), but without the reflective addSuppressed fallback that use() adds to the dex.
+    // A failing close() replaces the original exception; both make the import fail anyway.
+    private inline fun <C : Closeable, R> C.closing(block: (C) -> R): R =
+        try {
+            block(this)
+        } finally {
+            close()
+        }
+
     private fun copyImage(context: Context, uri: Uri) {
         val raw = File.createTempFile("marker-source", ".tmp", context.cacheDir)
         var output: File? = null
         try {
             val stream = context.contentResolver.openInputStream(uri) ?: throw IOException()
-            stream.use { input ->
-                raw.outputStream().use { destination ->
+            stream.closing { input ->
+                raw.outputStream().closing { destination ->
                     val buffer = ByteArray(16 * 1024)
                     var total = 0L
                     while (true) {
@@ -86,7 +113,7 @@ object MarkerImage {
             val oriented = orient(bitmap, raw)
             try {
                 output = File.createTempFile("marker-output", ".png", context.filesDir)
-                FileOutputStream(output).use { stream ->
+                FileOutputStream(output).closing { stream ->
                     if (!oriented.compress(Bitmap.CompressFormat.PNG, 100, stream)) throw IOException()
                     stream.fd.sync()
                 }

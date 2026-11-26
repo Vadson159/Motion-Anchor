@@ -55,7 +55,10 @@ class AnchorTileService : TileService() {
 class TileActionActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (!MotionAnchorService.start(this, automatic = false)) {
+        // Also opened from the notification that resumes background trip detection.
+        val automatic = intent.getBooleanExtra(MotionAnchorService.EXTRA_AUTOMATIC, false)
+        val ready = !automatic || MotionAnchorService.hasPreciseLocation(this)
+        if (!ready || !MotionAnchorService.start(this, automatic)) {
             startActivity(Intent(this, MainActivity::class.java))
         }
         finish()

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!-- Only the "full" flavor declares the accessibility service. Package verifiers such as
+     Play Protect treat an accessibility service in a sideloaded APK as high risk, so the
+     standard flavor leaves it out and installs without warnings. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name=".motion.AnchorAccessibilityService"
+            android:enabled="@bool/accessibility_overlay_available"
+            android:exported="true"
+            android:label="@string/accessibility_title"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service" />
+        </service>
+    </application>
+</manifest>

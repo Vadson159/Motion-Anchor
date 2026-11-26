@@ -8,6 +8,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Build
+import android.os.SystemClock
 import android.view.Surface
 import android.view.WindowManager
 import kotlin.math.atan2
@@ -26,16 +28,20 @@ import kotlin.math.sqrt
  * is the angular velocity around the world-horizontal axis perpendicular to the direction the
  * screen is facing. Together they describe how the phone's viewing direction rotates through
  * the world, driving the horizontal and vertical scroll of the dot grid.
+ *
+ * [forwardSpeed] is the signed travel speed (m/s) along the horizontal direction the user faces
+ * through the screen: positive while moving forward, negative while reversing.
+ *
+ * One instance is reused for every sensor event, so it is only valid during the callback.
  */
-data class MotionVector(
-    val x: Float,
-    val y: Float,
-    val outOfPlane: Float,
-    val rollRadians: Float,
-    val yawRateRps: Float,
-    val pitchRateRps: Float,
-) {
-    companion object { val ZERO = MotionVector(0f, 0f, 0f, 0f, 0f, 0f) }
+class MotionVector {
+    var x = 0f
+    var y = 0f
+    var outOfPlane = 0f
+    var rollRadians = 0f
+    var yawRateRps = 0f
+    var pitchRateRps = 0f
+    var forwardSpeed = 0f
 }
 
 /**
@@ -49,8 +55,20 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
     private val display = (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
     private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
     private val linearAccel = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
-    private val rotationVector = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    // Only world-up and rotation about it are used, both independent of compass heading. The game
+    // rotation vector leaves the magnetometer off, which saves power and ignores the magnetic
+    // disturbances common inside vehicles. Fall back to the geomagnetic one where it is missing.
+    private val rotationVector =
+        (if (Build.VERSION.SDK_INT >= 18) sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR) else null)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    private val rotationType = rotationVector?.type ?: -1
     private val gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+
+    private val motion = MotionVector()
+    // Display.getRotation() can be a binder call to system_server (before Android 11), so it is
+    // sampled a few times per second instead of on every sensor event.
+    private var displayRotation = Surface.ROTATION_0
+    private var rotationCheckedAtMs = 0L
 
     private val rotationMatrix = FloatArray(9)
     private val gravity = FloatArray(3)
@@ -78,11 +96,13 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
     private var stillAccumSec = 0f
     private var lastAccelMagSq = 0f
 
+    private val forward = ForwardSpeedEstimator()
+
     private val listener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             when (event.sensor.type) {
                 Sensor.TYPE_ACCELEROMETER -> updateGravity(event.values, event.timestamp)
-                Sensor.TYPE_ROTATION_VECTOR -> {
+                rotationType -> {
                     SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
                     hasRotation = true
                 }
@@ -139,12 +159,44 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
         // gyro handler (it typically ticks faster than accel).
         lastAccelMagSq = hx * hx + hy * hy + hz * hz
 
+        forward.integrate(forwardComponent(hx, hy, hz, ux, uy, uz), dt, SystemClock.elapsedRealtime())
+
         val projLenSq = ux * ux + uy * uy
         if (projLenSq > FLAT_ROLL_GUARD_SQ) {
             lastRollRadians = atan2(ux, uy)
         }
 
         publish()
+    }
+
+    /**
+     * The part of the horizontal acceleration (hx, hy, hz) along the horizontal direction the
+     * user looks through the screen. Held upright that is straight into the screen (device -Z);
+     * lying flat it is toward the top edge of the screen. In between both are blended, weighted
+     * so each one fades out exactly where it degenerates.
+     */
+    private fun forwardComponent(hx: Float, hy: Float, hz: Float, ux: Float, uy: Float, uz: Float): Float {
+        // Screen-up in device coordinates for the current display rotation.
+        val (sx, sy) = when (displayRotation) {
+            Surface.ROTATION_90 -> -1f to 0f
+            Surface.ROTATION_180 -> 0f to -1f
+            Surface.ROTATION_270 -> 1f to 0f
+            else -> 0f to 1f
+        }
+        val sUp = sx * ux + sy * uy
+        val weight = uz * uz
+        // horizontal(-Z) + uz² · horizontal(screen-up)
+        val fx = uz * ux + weight * (sx - sUp * ux)
+        val fy = uz * uy + weight * (sy - sUp * uy)
+        val fz = uz * uz - 1f + weight * (-sUp * uz)
+        val lenSq = fx * fx + fy * fy + fz * fz
+        if (lenSq < 1e-4f) return 0f
+        return (hx * fx + hy * fy + hz * fz) / sqrt(lenSq)
+    }
+
+    /** Speed from a location fix, which corrects the drift of the integrated acceleration. */
+    fun onLocationSpeed(metersPerSecond: Float?) {
+        forward.onLocationSpeed(metersPerSecond, SystemClock.elapsedRealtime())
     }
 
     private fun updateGyro(gx: Float, gy: Float, gz: Float, tsNs: Long) {
@@ -200,10 +252,15 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
         if (v > threshold) v - threshold else if (v < -threshold) v + threshold else 0f
 
     private fun publish() {
+        val now = SystemClock.uptimeMillis()
+        if (now - rotationCheckedAtMs >= ROTATION_POLL_MS) {
+            displayRotation = display.rotation
+            rotationCheckedAtMs = now
+        }
         var x = filteredX
         var y = filteredY
         var roll = lastRollRadians
-        when (display.rotation) {
+        when (displayRotation) {
             Surface.ROTATION_0 -> Unit
             Surface.ROTATION_90 -> {
                 x = filteredY
@@ -221,17 +278,19 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
                 roll -= HALF_TURN / 2f
             }
         }
-        onMotion(MotionVector(
-            x = x,
-            y = y,
-            outOfPlane = filteredZ,
-            rollRadians = roll,
-            yawRateRps = deadband(filteredYawRate, GYRO_DEADBAND_RPS),
-            pitchRateRps = deadband(filteredPitchRate, GYRO_DEADBAND_RPS),
-        ))
+        motion.x = x
+        motion.y = y
+        motion.outOfPlane = filteredZ
+        motion.rollRadians = roll
+        motion.yawRateRps = deadband(filteredYawRate, GYRO_DEADBAND_RPS)
+        motion.pitchRateRps = deadband(filteredPitchRate, GYRO_DEADBAND_RPS)
+        motion.forwardSpeed = forward.speed
+        onMotion(motion)
     }
 
     fun start() {
+        displayRotation = display.rotation
+        rotationCheckedAtMs = SystemClock.uptimeMillis()
         useRawAcceleration = !register(linearAccel)
         useGravityOrientation = !register(rotationVector)
         if (useRawAcceleration || useGravityOrientation) register(accelerometer)
@@ -239,7 +298,7 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
     }
 
     private fun register(sensor: Sensor?): Boolean =
-        sensor != null && sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        sensor != null && sensorManager.registerListener(listener, sensor, SAMPLING_PERIOD_US)
 
     fun stop() {
         sensorManager.unregisterListener(listener)
@@ -256,10 +315,23 @@ class MotionEstimator(context: Context, private val onMotion: (MotionVector) -> 
         // Don't clear gx/gy/gzBias — bias is a hardware property; persist across stop/start.
         stillAccumSec = 0f
         lastAccelMagSq = 0f
-        onMotion(MotionVector.ZERO)
+        forward.reset()
+        motion.x = 0f
+        motion.y = 0f
+        motion.outOfPlane = 0f
+        motion.rollRadians = 0f
+        motion.yawRateRps = 0f
+        motion.pitchRateRps = 0f
+        motion.forwardSpeed = 0f
+        onMotion(motion)
     }
 
     companion object {
+        private const val ROTATION_POLL_MS = 250L
+        // 100 Hz: fast enough that roll and turn rates update between frames on 90/120 Hz
+        // panels (SENSOR_DELAY_GAME is 50 Hz), and well below the 200 Hz limit that needs the
+        // HIGH_SAMPLING_RATE_SENSORS permission.
+        private const val SAMPLING_PERIOD_US = 10_000
         private const val HALF_TURN = 3.1415927f
         private const val ACCEL_TIME_CONSTANT_SEC = 0.08f
         private const val GYRO_TIME_CONSTANT_SEC = 0.03f

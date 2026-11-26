@@ -4,6 +4,8 @@
 package app.motionanchor
 
 import android.Manifest
+import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
@@ -15,18 +17,23 @@ import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.StateListDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
+import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.WindowInsets
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -34,9 +41,9 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import app.motionanchor.motion.AnchorAccessibilityService
 import app.motionanchor.motion.CueMode
 import app.motionanchor.motion.CueOverlayView
+import app.motionanchor.motion.FrameRates
 import app.motionanchor.motion.MotionAnchorService
 import app.motionanchor.motion.SessionState
 import java.util.Locale
@@ -53,26 +60,34 @@ class MainActivity : Activity() {
     private lateinit var overlayPermission: Button
     private lateinit var trip: Button
     private lateinit var previewCard: LinearLayout
+    private lateinit var previewBackground: GradientDrawable
     private lateinit var previewTitle: TextView
     private lateinit var preview: CueOverlayView
     private lateinit var style: Button
     private lateinit var placement: Button
     private lateinit var color: Button
-    private lateinit var swatch: View
+    private lateinit var swatch: GradientDrawable
+    private lateinit var frameRate: Button
+    private lateinit var forwardMotion: CheckBox
     private lateinit var chooseImage: Button
     private lateinit var removeImage: Button
     private lateinit var density: Slider
     private var sliders = mutableListOf<Slider>()
     private var fullScreen: Switch? = null
+    private lateinit var background: Switch
+    private lateinit var battery: Button
+    // Background mode turns on only once its permissions are settled; until then the switch
+    // shows the request in progress.
+    private var pendingBackground = false
+    private var backgroundSettingsOpened = false
+    private var backgroundRequestedAt = 0L
     private var accessibilitySettings: Button? = null
-    private var importedRevision: Int? = null
-    private var importedMarker: android.graphics.Bitmap? = null
     private var importing = false
 
-    private val sessionListener: () -> Unit = ::refreshSession
-    private val preferencesListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
-        refreshAppearance()
-        refreshSession()
+    private val sessionListener: () -> Unit = { refreshSession() }
+    // Sliders write on every step, so only redo the part that depends on the changed key.
+    private val preferencesListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == AnchorSettings.FULL_SCREEN || key == AnchorSettings.BACKGROUND_TRIP) refreshSession() else refreshAppearance()
     }
 
     override fun attachBaseContext(newBase: Context) {
@@ -87,10 +102,18 @@ class MainActivity : Activity() {
             InterfaceTheme.System -> if (followsDarkSystem) InterfaceTheme.Dark else InterfaceTheme.Light
             else -> settings.interfaceTheme
         }
-        palette = InterfacePalette.forTheme(theme)
+        palette = InterfacePalette.forTheme(theme, settings.themeColor)
         setTheme(palette.platformTheme)
         super.onCreate(savedInstanceState)
-        val root = stack().apply { setBackgroundColor(palette.systemBars) }
+        // The theme resources hold the default colors; the chosen theme color replaces them here.
+        window.setBackgroundDrawable(ColorDrawable(palette.systemBars))
+        if (Build.VERSION.SDK_INT in 21..34) {
+            window.statusBarColor = palette.systemBars
+            window.navigationBarColor = palette.systemBars
+        }
+        // The theme's window background already has the system bar color, so the root stays
+        // transparent rather than painting the whole screen a second time.
+        val root = stack()
         val scroll = ScrollView(this).apply {
             isFillViewport = true
             setBackgroundColor(palette.page)
@@ -113,6 +136,7 @@ class MainActivity : Activity() {
         addAppearance()
         addTripAndSystem()
         addInterfaceSettings()
+        addSupport()
         refreshAppearance()
         refreshSession()
     }
@@ -126,6 +150,17 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        if (backgroundSettingsOpened) {
+            // Back from the location page: continue with whatever the user chose there.
+            backgroundSettingsOpened = false
+            finishBackground()
+        } else if (settings.backgroundTrip && !pendingBackground && MotionAnchorService.state == SessionState.Off &&
+            MotionAnchorService.canShowOverlay(this) && MotionAnchorService.hasPreciseLocation(this)
+        ) {
+            // Background mode is on but its session ended (a reboot without "Allow all the
+            // time", or Android stopped it); opening the app brings it back.
+            MotionAnchorService.start(this, automatic = true)
+        }
         refreshSession()
     }
 
@@ -138,8 +173,8 @@ class MainActivity : Activity() {
     private fun addSession() {
         val card = panel(palette.header, border = false)
         card.addView(label(getString(R.string.app_name), 32f, Color.WHITE, bold = true))
-        card.addView(label(getString(R.string.intro), 15f, LIGHT_TEXT), gap(5))
-        status = label("", 15f, MINT, bold = true).also { card.addView(it, gap(16)) }
+        card.addView(label(getString(R.string.intro), 15f, palette.headerText), gap(5))
+        status = label("", 15f, palette.headerAccent, bold = true).also { card.addView(it, gap(16)) }
         primary = action("", prominent = true) {
             if (MotionAnchorService.state != SessionState.Off) {
                 MotionAnchorService.stop(this)
@@ -163,17 +198,19 @@ class MainActivity : Activity() {
     private fun addAppearance() {
         section(R.string.section_appearance)
         val card = panel()
+        previewBackground = rounded(palette.header, 13)
         previewCard = stack().apply {
+            background = previewBackground
             setPadding(dp(14), dp(12), dp(14), dp(5))
         }
-        previewTitle = label(getString(R.string.section_preview), 14f, LIGHT_TEXT, bold = true)
+        previewTitle = label(getString(R.string.section_preview), 14f, palette.headerText, bold = true)
         previewCard.addView(previewTitle)
         preview = CueOverlayView(this, preview = true)
         previewCard.addView(preview, gap(0, dp(120)))
         card.addView(previewCard)
         style = option(card, R.string.style_label) {
-            val styles = CueStyle.entries
-            choose(R.string.style_label, styles.map { getString(it.title) }, settings.appearance.style.ordinal) { index ->
+            val styles = CueStyle.values()
+            choose(R.string.style_label, Array(styles.size) { getString(styles[it].title) }, settings.appearance.style.ordinal) { index ->
                 val selected = styles[index]
                 if (selected == CueStyle.Image && !MarkerImage.exists(this)) {
                     pickImage()
@@ -185,22 +222,27 @@ class MainActivity : Activity() {
         placement = option(card, R.string.placement_label) {
             choose(
                 R.string.placement_label,
-                listOf(getString(R.string.placement_focus), getString(R.string.placement_uniform)),
+                arrayOf(getString(R.string.placement_focus), getString(R.string.placement_uniform)),
                 if (settings.appearance.placement == CueMode.Focus) 0 else 1,
             ) { setEnum(AnchorSettings.PLACEMENT, if (it == 0) CueMode.Focus else CueMode.Uniform) }
         }
-        val colorRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        swatch = View(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
-        colorRow.addView(swatch, LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(9) })
-        color = action("", clicked = ::showPalette)
-        colorRow.addView(color, LinearLayout.LayoutParams(0, -2, 1f))
-        card.addView(colorRow, gap(8))
+        swatch = rounded(Color.WHITE, 15, palette.border)
+        color = colorRow(card, swatch) {
+            pickColor(R.string.color_label, settings.appearance.color, AnchorSettings.DEFAULT_MARKER_COLOR) { saveColor(it) }
+        }
         addSlider(card, R.string.size_label, AnchorSettings.SIZE, 50, 300) { it.size }
         addSlider(card, R.string.opacity_label, AnchorSettings.OPACITY, 15, 100) { it.opacity }
         density = addSlider(card, R.string.density_label, AnchorSettings.DENSITY, 40, 180) { it.density }
         addSlider(card, R.string.sensitivity_label, AnchorSettings.SENSITIVITY, 30, 200) { it.sensitivity }
+        forwardMotion = checkbox(R.string.forward_motion_label) { checked ->
+            if (settings.appearance.forwardMotion != checked) {
+                settings.preferences.edit().putBoolean(AnchorSettings.FORWARD_MOTION, checked).apply()
+            }
+        }.also { card.addView(it, gap(8)) }
+        card.addView(label(getString(R.string.forward_motion_hint), 14f, palette.secondary), gap(2))
+        frameRate = option(card, R.string.frame_rate_label) { chooseFrameRate() }
         card.addView(label(getString(R.string.image_hint), 14f, palette.secondary), gap(12))
-        chooseImage = action(getString(R.string.image_choose), clicked = ::pickImage)
+        chooseImage = action(getString(R.string.image_choose)) { pickImage() }
             .also { card.addView(it, gap(7)) }
         removeImage = action(getString(R.string.image_remove)) {
             importing = true
@@ -217,18 +259,20 @@ class MainActivity : Activity() {
         card.addView(label(getString(R.string.trip_hint), 15f, palette.secondary))
         trip = action(getString(R.string.action_arm)) { enableTravel() }
             .also { card.addView(it, gap(9)) }
-        if (Build.VERSION.SDK_INT >= 22) {
-            fullScreen = Switch(this).apply {
-                text = getString(R.string.full_screen_label)
-                setTextColor(palette.text)
-                textSize = 16f
-                minHeight = dp(48)
-                setOnCheckedChangeListener { _, checked ->
-                    if (settings.fullScreen != checked) {
-                        settings.preferences.edit().putBoolean(AnchorSettings.FULL_SCREEN, checked).apply()
-                    }
+        background = toggle(R.string.background_label) { checked ->
+            if (checked != (settings.backgroundTrip || pendingBackground)) {
+                if (checked) startBackground() else stopBackground()
+            }
+        }.also { card.addView(it, gap(12)) }
+        card.addView(label(getString(R.string.background_hint), 14f, palette.secondary), gap(3))
+        battery = action(getString(R.string.battery_action)) { requestBatteryExemption() }
+            .also { card.addView(it, gap(7)) }
+        if (BuildConfig.ACCESSIBILITY_OVERLAY && Build.VERSION.SDK_INT >= 22) {
+            fullScreen = toggle(R.string.full_screen_label) { checked ->
+                if (settings.fullScreen != checked) {
+                    settings.preferences.edit().putBoolean(AnchorSettings.FULL_SCREEN, checked).apply()
                 }
-            }.also { card.addView(it, gap(12)) }
+            }.also { card.addView(it, gap(18)) }
             card.addView(label(getString(R.string.accessibility_description), 14f, palette.secondary), gap(3))
             accessibilitySettings = action(getString(R.string.accessibility_open)) {
                 openSettings(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -243,10 +287,10 @@ class MainActivity : Activity() {
     private fun addInterfaceSettings() {
         section(R.string.section_interface)
         val card = panel()
-        val themes = InterfaceTheme.entries
+        val themes = InterfaceTheme.values()
         val selectedTheme = settings.interfaceTheme
         option(card, R.string.theme_label) {
-            choose(R.string.theme_label, themes.map { getString(it.title) }, selectedTheme.ordinal) { index ->
+            choose(R.string.theme_label, Array(themes.size) { getString(themes[it].title) }, selectedTheme.ordinal) { index ->
                 val next = themes[index]
                 if (next != selectedTheme) {
                     setEnum(AnchorSettings.INTERFACE_THEME, next)
@@ -254,8 +298,17 @@ class MainActivity : Activity() {
                 }
             }
         }.setText(selectedTheme.title)
-        val names = listOf(getString(R.string.language_system), "English", "Русский", "Polski")
-        val tags = listOf("", "en", "ru", "pl")
+        val themeColor = settings.themeColor
+        colorRow(card, rounded(themeColor, 15, palette.border)) {
+            pickColor(R.string.theme_color_label, themeColor, AnchorSettings.DEFAULT_THEME_COLOR) { picked ->
+                if (picked != themeColor) {
+                    settings.preferences.edit().putInt(AnchorSettings.THEME_COLOR, picked).apply()
+                    recreate()
+                }
+            }
+        }.text = getString(R.string.theme_color_value, hex(themeColor))
+        val names = arrayOf(getString(R.string.language_system), "English", "Русский", "Polski")
+        val tags = arrayOf("", "en", "ru", "pl")
         val selected = tags.indexOf(settings.language).coerceAtLeast(0)
         option(card, R.string.section_language) {
             choose(R.string.section_language, names, selected) { index ->
@@ -265,6 +318,14 @@ class MainActivity : Activity() {
                 }
             }
         }.text = names[selected]
+        body.addView(card, gap(8))
+    }
+
+    private fun addSupport() {
+        section(R.string.section_support)
+        val card = panel()
+        card.addView(label(getString(R.string.support_hint), 14f, palette.secondary))
+        card.addView(action(getString(R.string.support_action)) { openLink(SUPPORT_URL) }, gap(10))
         body.addView(card, gap(8))
     }
 
@@ -280,11 +341,19 @@ class MainActivity : Activity() {
         primary.isEnabled = canOverlay || state != SessionState.Off
         overlayPermission.visibility = if (canOverlay) View.GONE else View.VISIBLE
         trip.isEnabled = canOverlay && state == SessionState.Off
+        trip.setText(if (state != SessionState.Off && MotionAnchorService.tripMode) R.string.trip_active else R.string.action_arm)
         notifications.visibility = if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) View.VISIBLE else View.GONE
+        background.isChecked = settings.backgroundTrip || pendingBackground
+        background.isEnabled = canOverlay || background.isChecked
+        battery.visibility = if (settings.backgroundTrip && !MotionAnchorService.isIgnoringBatteryOptimizations(this)) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
         fullScreen?.isChecked = settings.fullScreen
-        accessibilitySettings?.visibility = if (settings.fullScreen && AnchorAccessibilityService.current == null) {
+        accessibilitySettings?.visibility = if (settings.fullScreen && MotionAnchorService.accessibilityHost() == null) {
             View.VISIBLE
         } else {
             View.GONE
@@ -294,32 +363,29 @@ class MainActivity : Activity() {
     private fun refreshAppearance() {
         val appearance = settings.appearance
         val hasImage = MarkerImage.exists(this)
-        val revision = settings.preferences.getInt(AnchorSettings.IMAGE_REVISION, 0)
-        if (importedRevision != revision) {
-            importedRevision = revision
-            importedMarker = if (hasImage) MarkerImage.load(this) else null
-        }
-        preview.setAppearance(appearance, importedMarker)
+        // Decode the image only while it is the selected marker.
+        preview.setAppearance(appearance, if (hasImage && appearance.style == CueStyle.Image) MarkerImage.load(this) else null)
         val rgb = appearance.color
         val brightness = (299 * Color.red(rgb) + 587 * Color.green(rgb) + 114 * Color.blue(rgb)) / 1000
         val contrastThreshold = if (palette.isDark) 75 else 115
         val lightPreview = appearance.style != CueStyle.Image && brightness < contrastThreshold
-        val previewBackground = when {
-            lightPreview && palette.isDark -> PREVIEW_MUTED
-            lightPreview -> PREVIEW_LIGHT
+        previewBackground.setColor(when {
+            lightPreview && palette.isDark -> palette.previewMuted
+            lightPreview -> palette.previewLight
             palette.isDark -> palette.page
             else -> palette.header
-        }
-        previewCard.background = rounded(previewBackground, 13)
-        previewTitle.setTextColor(if (lightPreview) PRIMARY_TEXT else LIGHT_TEXT)
+        })
+        previewTitle.setTextColor(if (lightPreview) palette.onPreviewLight else palette.headerText)
         style.setText(appearance.style.title)
         placement.setText(
             if (appearance.placement == CueMode.Focus) R.string.placement_focus else R.string.placement_uniform,
         )
         color.text = getString(R.string.color_value, hex(appearance.color))
         color.isEnabled = appearance.style != CueStyle.Image
-        swatch.background = rounded(appearance.color, 15, palette.border)
+        swatch.setColor(appearance.color)
         density.container.visibility = if (appearance.style == CueStyle.Horizon) View.GONE else View.VISIBLE
+        forwardMotion.isChecked = appearance.forwardMotion
+        frameRate.text = frameRateName(appearance.frameRate)
         sliders.forEach { it.render(appearance) }
         chooseImage.setText(when {
             importing -> R.string.image_importing
@@ -352,15 +418,135 @@ class MainActivity : Activity() {
             openSettings(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
             return
         }
-        startSession(automatic = true)
+        if (MotionAnchorService.start(this, automatic = true)) {
+            Toast.makeText(this, R.string.trip_enabled, Toast.LENGTH_LONG).show()
+        } else {
+            displayMessage(R.string.session_failed)
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_LOCATION) {
-            if (MotionAnchorService.hasPreciseLocation(this)) enableTravel() else displayMessage(R.string.trip_location_required)
+        if (requestCode == REQUEST_LOCATION && permissions.isNotEmpty()) {
+            when {
+                MotionAnchorService.hasPreciseLocation(this) -> if (pendingBackground) continueBackground() else enableTravel()
+                // After a second refusal, or once only approximate location was granted, Android
+                // answers at once without showing a dialog. Only the app settings can change it.
+                Build.VERSION.SDK_INT >= 23 &&
+                    !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION) -> {
+                    pendingBackground = false
+                    explainLocation()
+                }
+                else -> {
+                    pendingBackground = false
+                    displayMessage(R.string.trip_location_required)
+                }
+            }
+        }
+        if (requestCode == REQUEST_BACKGROUND_LOCATION && permissions.isNotEmpty()) {
+            when {
+                MotionAnchorService.hasBackgroundLocation(this) -> finishBackground()
+                // An answer this fast means Android refused without asking, which it does after
+                // earlier refusals. The option is then only on the app's location page.
+                SystemClock.elapsedRealtime() - backgroundRequestedAt < 500L &&
+                    openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) ->
+                    backgroundSettingsOpened = true
+                else -> finishBackground()
+            }
         }
         refreshSession()
+    }
+
+    private fun startBackground() {
+        if (!MotionAnchorService.canShowOverlay(this)) {
+            displayMessage(R.string.session_failed)
+            refreshSession()
+            return
+        }
+        pendingBackground = true
+        continueBackground()
+    }
+
+    private fun continueBackground() {
+        if (!MotionAnchorService.hasPreciseLocation(this)) {
+            if (Build.VERSION.SDK_INT >= 23) {
+                requestPermissions(
+                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
+                    REQUEST_LOCATION,
+                )
+            } else {
+                pendingBackground = false
+                displayMessage(R.string.trip_location_required)
+                refreshSession()
+            }
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 29 && !MotionAnchorService.hasBackgroundLocation(this)) {
+            askBackgroundLocation()
+            return
+        }
+        finishBackground()
+    }
+
+    /** Android shows "Allow all the time" only on a separate page, so say why first. */
+    @TargetApi(29)
+    private fun askBackgroundLocation() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.background_location_title)
+            .setMessage(R.string.background_location_message)
+            .setPositiveButton(R.string.action_continue) { _, _ ->
+                backgroundRequestedAt = SystemClock.elapsedRealtime()
+                requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQUEST_BACKGROUND_LOCATION)
+            }
+            .setNegativeButton(R.string.action_skip) { _, _ -> finishBackground() }
+            .setOnCancelListener {
+                pendingBackground = false
+                refreshSession()
+            }
+            .show()
+    }
+
+    private fun finishBackground() {
+        pendingBackground = false
+        settings.preferences.edit().putBoolean(AnchorSettings.BACKGROUND_TRIP, true).apply()
+        // A manual overlay becomes a trip session; a running trip session only turns sticky.
+        if (MotionAnchorService.state != SessionState.Off && !MotionAnchorService.tripMode) {
+            MotionAnchorService.stop(this, keepBackground = true)
+        }
+        val started = MotionAnchorService.start(this, automatic = true)
+        val message = when {
+            !started -> R.string.session_failed
+            !MotionAnchorService.hasBackgroundLocation(this) -> R.string.background_without_location
+            !MotionAnchorService.isGpsEnabled(this) -> R.string.trip_gps_required
+            else -> R.string.background_enabled
+        }
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        refreshSession()
+        if (started && !MotionAnchorService.isIgnoringBatteryOptimizations(this)) requestBatteryExemption()
+    }
+
+    private fun stopBackground() {
+        settings.preferences.edit().putBoolean(AnchorSettings.BACKGROUND_TRIP, false).apply()
+        if (MotionAnchorService.state != SessionState.Off && MotionAnchorService.tripMode) MotionAnchorService.stop(this)
+        refreshSession()
+    }
+
+    /** Some vendors stop long-running services of apps under battery optimization. */
+    @SuppressLint("BatteryLife")
+    private fun requestBatteryExemption() {
+        if (Build.VERSION.SDK_INT < 23) return
+        openSettings(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+    }
+
+    private fun explainLocation() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.trip_permission_title)
+            .setMessage(R.string.trip_permission_message)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.action_app_settings) { _, _ ->
+                openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+            }
+            .show()
     }
 
     private fun pickImage() {
@@ -392,50 +578,143 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showPalette() {
-        val palette = listOf(
-            R.string.color_white to Color.WHITE,
-            R.string.color_black to Color.BLACK,
-            R.string.color_aqua to 0xFF63E6BE.toInt(),
-            R.string.color_coral to 0xFFFF786B.toInt(),
-            R.string.color_gold to 0xFFFFCC61.toInt(),
-            R.string.color_blue to 0xFF78BCFF.toInt(),
-        )
-        val labels = palette.map { (title, value) -> "${getString(title)}  ·  ${hex(value)}" } +
-            getString(R.string.color_custom)
-        choose(R.string.color_label, labels, palette.indexOfFirst { it.second == settings.appearance.color }) { index ->
-            if (index == palette.size) showHexInput() else saveColor(palette[index].second)
+    private fun chooseFrameRate() {
+        val native = FrameRates.supported(this)
+        val rates = intArrayOf(0) + FrameRates.options(native)
+        val current = settings.appearance.frameRate
+        val index = rates.indexOf(current)
+        // Rates that are display modes are marked: they run without skipped refreshes.
+        val names = Array(rates.size) {
+            val rate = rates[it]
+            if (rate > 0 && rate in native) getString(R.string.frame_rate_native, rate) else frameRateName(rate, native)
+        } + if (index < 0) getString(R.string.frame_rate_custom_value, current) else getString(R.string.frame_rate_custom)
+        choose(R.string.frame_rate_label, names, if (index >= 0) index else rates.size) { picked ->
+            if (picked < rates.size) saveFrameRate(rates[picked]) else enterFrameRate(native.last())
         }
     }
 
-    private fun showHexInput() {
+    private fun enterFrameRate(fastest: Int) {
+        val limit = FrameRates.CUSTOM_MAX
         val field = EditText(this).apply {
             isSingleLine = true
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
-            filters = arrayOf(InputFilter.LengthFilter(7))
-            setText(hex(settings.appearance.color))
-            selectAll()
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf(InputFilter.LengthFilter(limit.toString().length))
+            hint = getString(R.string.frame_rate_value, fastest)
+            contentDescription = getString(R.string.frame_rate_label)
+            settings.appearance.frameRate.takeIf { it > 0 }?.let { setText(String.format(Locale.ROOT, "%d", it)) }
+            setSelection(text.length)
         }
         val content = stack().apply {
-            setPadding(dp(22), dp(8), dp(22), 0)
-            addView(field)
+            setPadding(dp(20), dp(4), dp(20), dp(4))
+            addView(field, LinearLayout.LayoutParams(-1, -2))
         }
-        val dialog = AlertDialog.Builder(this).setTitle(R.string.color_custom).setView(content)
+        val dialog = AlertDialog.Builder(this).setTitle(R.string.frame_rate_custom_title)
+            .setMessage(getString(R.string.frame_rate_custom_hint, limit, fastest))
+            .setView(content)
             .setNegativeButton(android.R.string.cancel, null)
             .setPositiveButton(android.R.string.ok, null).create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val input = field.text.toString().trim().removePrefix("#")
-                val rgb = input.toIntOrNull(16)
-                if (input.matches(HEX_COLOR) && rgb != null) {
-                    saveColor(0xFF000000.toInt() or rgb)
-                    dialog.dismiss()
+                val rate = field.text.toString().trim().toIntOrNull()
+                if (rate == null || rate !in 1..limit) {
+                    field.error = getString(R.string.frame_rate_invalid, limit)
                 } else {
-                    field.error = getString(R.string.color_invalid)
+                    dialog.dismiss()
+                    saveFrameRate(rate)
                 }
             }
         }
         dialog.show()
+    }
+
+    private fun saveFrameRate(rate: Int) {
+        settings.preferences.edit().putInt(AnchorSettings.FRAME_RATE, rate).apply()
+    }
+
+    private fun frameRateName(rate: Int, native: IntArray = FrameRates.supported(this)): String =
+        if (rate > 0) getString(R.string.frame_rate_value, rate)
+        else getString(R.string.frame_rate_max, native.last())
+
+    /** Palette dialog: drag on the field and the hue strip, or type a hex value. */
+    private fun pickColor(title: Int, initial: Int, default: Int, onPick: (Int) -> Unit) {
+        val picker = ColorPickerView(this).apply { setColor(initial) }
+        val preview = rounded(initial, 15, palette.border)
+        val field = EditText(this).apply {
+            isSingleLine = true
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+            filters = arrayOf(InputFilter.LengthFilter(7))
+            hint = "#RRGGBB"
+            contentDescription = getString(R.string.color_hex)
+            setText(hex(initial))
+        }
+        var syncing = false
+        picker.onColorChanged = { picked ->
+            preview.setColor(picked)
+            syncing = true
+            field.setText(hex(picked))
+            field.error = null
+            syncing = false
+        }
+        field.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: Editable) {
+                if (syncing) return
+                val parsed = parseHex(s.toString()) ?: return
+                picker.setColor(parsed)
+                preview.setColor(parsed)
+            }
+        })
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(View(this).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            background = preview
+        }, LinearLayout.LayoutParams(dp(40), dp(40)).apply { rightMargin = dp(12) })
+        row.addView(field, LinearLayout.LayoutParams(0, -2, 1f))
+        val content = stack().apply {
+            setPadding(dp(20), dp(10), dp(20), dp(4))
+            addView(picker, LinearLayout.LayoutParams(-1, -2))
+            addView(row, gap(10))
+        }
+        val dialog = AlertDialog.Builder(this).setTitle(title).setView(ScrollView(this).apply { addView(content) })
+            .setNegativeButton(android.R.string.cancel, null)
+            .setNeutralButton(R.string.color_default, null)
+            .setPositiveButton(android.R.string.ok, null).create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                picker.setColor(default)
+                picker.onColorChanged?.invoke(default)
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val parsed = parseHex(field.text.toString())
+                if (parsed == null) {
+                    field.error = getString(R.string.color_invalid)
+                } else {
+                    dialog.dismiss()
+                    onPick(parsed)
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    private fun parseHex(text: String): Int? {
+        val input = text.trim().removePrefix("#")
+        if (input.length != 6 || !input.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return null
+        return 0xFF000000.toInt() or Integer.parseInt(input, 16)
+    }
+
+    private fun colorRow(parent: LinearLayout, swatch: GradientDrawable, onClick: () -> Unit): Button {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(View(this).apply {
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            background = swatch
+        }, LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(9) })
+        val button = action("", clicked = onClick)
+        row.addView(button, LinearLayout.LayoutParams(0, -2, 1f))
+        parent.addView(row, gap(8))
+        return button
     }
 
     private fun saveColor(color: Int) {
@@ -452,17 +731,50 @@ class MainActivity : Activity() {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    private fun openSettings(intent: Intent) {
+    private fun openSettings(intent: Intent): Boolean = try {
+        startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        displayMessage(R.string.permission_settings_error)
+        false
+    }
+
+    private fun openLink(url: String) {
         try {
-            startActivity(intent)
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (_: ActivityNotFoundException) {
-            displayMessage(R.string.permission_settings_error)
+            displayMessage(R.string.link_open_error)
         }
     }
 
-    private fun choose(title: Int, options: List<String>, index: Int, onPick: (Int) -> Unit) {
+    private fun checkbox(title: Int, changed: (Boolean) -> Unit) = CheckBox(this).apply {
+        text = getString(title)
+        setTextColor(palette.text)
+        textSize = 16f
+        minHeight = dp(48)
+        if (Build.VERSION.SDK_INT >= 21) {
+            val on = intArrayOf(android.R.attr.state_checked)
+            buttonTintList = ColorStateList(arrayOf(on, intArrayOf()), intArrayOf(palette.control, palette.secondary))
+        }
+        setOnCheckedChangeListener { _, checked -> changed(checked) }
+    }
+
+    private fun toggle(title: Int, changed: (Boolean) -> Unit) = Switch(this).apply {
+        text = getString(title)
+        setTextColor(palette.text)
+        textSize = 16f
+        minHeight = dp(48)
+        if (Build.VERSION.SDK_INT >= 23) {
+            val on = intArrayOf(android.R.attr.state_checked)
+            thumbTintList = ColorStateList(arrayOf(on, intArrayOf()), intArrayOf(palette.control, palette.button))
+            trackTintList = ColorStateList(arrayOf(on, intArrayOf()), intArrayOf(palette.control, palette.secondary))
+        }
+        setOnCheckedChangeListener { _, checked -> changed(checked) }
+    }
+
+    private fun choose(title: Int, options: Array<String>, index: Int, onPick: (Int) -> Unit) {
         AlertDialog.Builder(this).setTitle(title)
-            .setSingleChoiceItems(options.toTypedArray(), index) { dialog, selected ->
+            .setSingleChoiceItems(options, index) { dialog, selected ->
                 dialog.dismiss()
                 onPick(selected)
             }
@@ -492,6 +804,11 @@ class MainActivity : Activity() {
             max = maximum - minimum
             contentDescription = getString(title)
             minimumHeight = dp(42)
+            if (Build.VERSION.SDK_INT >= 21) {
+                val tint = ColorStateList.valueOf(palette.control)
+                progressTintList = tint
+                thumbTintList = tint
+            }
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
                 override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
@@ -544,15 +861,15 @@ class MainActivity : Activity() {
         setTextColor(
             ColorStateList(
                 arrayOf(disabled, intArrayOf()),
-                intArrayOf(palette.secondary, if (prominent) PRIMARY_TEXT else palette.text),
+                intArrayOf(palette.secondary, if (prominent) palette.onAccent else palette.text),
             ),
         )
         if (Build.VERSION.SDK_INT >= 21) stateListAnimator = null
         background = StateListDrawable().apply {
             addState(disabled, rounded(palette.disabled, 10))
-            addState(intArrayOf(android.R.attr.state_pressed), rounded(if (prominent) PRESSED_MINT else palette.pressed, 10))
-            addState(intArrayOf(android.R.attr.state_focused), rounded(if (prominent) FOCUSED_MINT else palette.pressed, 10))
-            addState(intArrayOf(), rounded(if (prominent) MINT else palette.button, 10))
+            addState(intArrayOf(android.R.attr.state_pressed), rounded(if (prominent) palette.accentPressed else palette.pressed, 10))
+            addState(intArrayOf(android.R.attr.state_focused), rounded(if (prominent) palette.accentFocused else palette.pressed, 10))
+            addState(intArrayOf(), rounded(if (prominent) palette.accent else palette.button, 10))
         }
         setOnClickListener { clicked() }
     }
@@ -566,16 +883,10 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
 
     companion object {
-        private val PRIMARY_TEXT = 0xFF152E32.toInt()
-        private val LIGHT_TEXT = 0xFFD8E8E5.toInt()
-        private val MINT = 0xFF8CF0CA.toInt()
-        private val PRESSED_MINT = 0xFF75D9B1.toInt()
-        private val FOCUSED_MINT = 0xFFA6F7DA.toInt()
-        private val PREVIEW_LIGHT = 0xFFEDF4F0.toInt()
-        private val PREVIEW_MUTED = 0xFF78988F.toInt()
-        private val HEX_COLOR = Regex("[0-9a-fA-F]{6}")
         private const val REQUEST_IMAGE = 1
         private const val REQUEST_LOCATION = 2
         private const val REQUEST_NOTIFICATIONS = 3
+        private const val REQUEST_BACKGROUND_LOCATION = 4
+        private const val SUPPORT_URL = "https://buymeacoffee.com/vadson"
     }
 }

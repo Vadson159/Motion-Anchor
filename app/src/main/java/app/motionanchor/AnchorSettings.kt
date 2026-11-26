@@ -35,6 +35,10 @@ data class CueAppearance(
     val opacity: Int = 85,
     val density: Int = 100,
     val sensitivity: Int = 100,
+    /** Scrolls the marker field with forward and reverse travel instead of longitudinal acceleration alone. */
+    val forwardMotion: Boolean = false,
+    /** Highest frame rate of the overlay; 0 follows the fastest refresh rate of the display. */
+    val frameRate: Int = 0,
 )
 
 class AnchorSettings(context: Context) {
@@ -49,18 +53,25 @@ class AnchorSettings(context: Context) {
             opacity = preferences.getInt(OPACITY, 85).coerceIn(15, 100),
             density = preferences.getInt(DENSITY, 100).coerceIn(40, 180),
             sensitivity = preferences.getInt(SENSITIVITY, 100).coerceIn(30, 200),
+            forwardMotion = preferences.getBoolean(FORWARD_MOTION, false),
+            frameRate = preferences.getInt(FRAME_RATE, 0).coerceIn(0, 1000),
         )
 
     val language: String get() = preferences.getString(LANGUAGE, "").orEmpty()
     val fullScreen: Boolean get() = preferences.getBoolean(FULL_SCREEN, false)
+    /** Trip detection keeps running without the app and comes back after a reboot. */
+    val backgroundTrip: Boolean get() = preferences.getBoolean(BACKGROUND_TRIP, false)
     val interfaceTheme: InterfaceTheme get() = readEnum(INTERFACE_THEME, InterfaceTheme.System)
+    val themeColor: Int get() = preferences.getInt(THEME_COLOR, DEFAULT_THEME_COLOR) or 0xFF000000.toInt()
 
-    private inline fun <reified T : Enum<T>> readEnum(key: String, fallback: T): T =
-        enumValues<T>().firstOrNull { it.name == preferences.getString(key, null) } ?: fallback
+    private inline fun <reified T : Enum<T>> readEnum(key: String, fallback: T): T {
+        val name = preferences.getString(key, null) ?: return fallback
+        return enumValues<T>().firstOrNull { it.name == name } ?: fallback
+    }
 
     fun resetAppearance() {
         val editor = preferences.edit()
-        for (key in listOf(STYLE, PLACEMENT, COLOR, SIZE, OPACITY, DENSITY, SENSITIVITY)) {
+        for (key in arrayOf(STYLE, PLACEMENT, COLOR, SIZE, OPACITY, DENSITY, SENSITIVITY)) {
             editor.remove(key)
         }
         editor.apply()
@@ -74,10 +85,17 @@ class AnchorSettings(context: Context) {
         const val OPACITY = "opacity"
         const val DENSITY = "density"
         const val SENSITIVITY = "sensitivity"
+        const val FORWARD_MOTION = "forward_motion"
         const val LANGUAGE = "language"
         const val FULL_SCREEN = "full_screen"
         const val INTERFACE_THEME = "interface_theme"
         const val IMAGE_REVISION = "image_revision"
+        const val FRAME_RATE = "frame_rate"
+        const val THEME_COLOR = "theme_color"
+        const val BACKGROUND_TRIP = "background_trip"
+
+        const val DEFAULT_MARKER_COLOR = Color.WHITE
+        const val DEFAULT_THEME_COLOR = 0xFF8CF0CA.toInt()
     }
 }
 

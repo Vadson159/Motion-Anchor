@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: 2026 David Ventura
 # SPDX-License-Identifier: GPL-3.0-only
 
-# Preserve file names and line numbers for readable stack traces
+# Preserve file names and line numbers for readable stack traces.
+# Retrace obfuscated traces with app/build/outputs/mapping/release/mapping.txt.
 -keepattributes SourceFile,LineNumberTable
 
 # Replace source file paths with just "SourceFile" to avoid leaking build paths
 -renamesourcefileattribute SourceFile
 
-# Disable source-code minification (obfuscation + optimization)
-# while still letting R8 shrink unused code/resources.
--dontobfuscate
--dontoptimize
+# Full R8 optimization and renaming. Classes that Android instantiates by name
+# (manifest components) keep their names through the rules AAPT2 generates.
+# Moving the renamed classes into one package shortens names in the dex.
+-repackageclasses
