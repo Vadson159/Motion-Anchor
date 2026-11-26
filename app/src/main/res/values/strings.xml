@@ -92,8 +92,4 @@
     <string name="frame_rate_invalid">Enter a number from 1 to %1$d.</string>
     <string name="forward_motion_label">Forward and backward motion</string>
     <string name="forward_motion_hint">Scroll markers down while driving forward and up while reversing.</string>
-    <string name="section_support">Support</string>
-    <string name="support_hint">Motion Anchor is free and open source. If it helps you on the road, you can support its development.</string>
-    <string name="support_action">Buy Me a Coffee</string>
-    <string name="link_open_error">Could not open the link.</string>
 </resources>

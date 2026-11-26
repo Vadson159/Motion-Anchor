@@ -92,8 +92,4 @@
     <string name="frame_rate_invalid">Введите число от 1 до %1$d.</string>
     <string name="forward_motion_label">Движение вперёд и назад</string>
     <string name="forward_motion_hint">Маркеры движутся вниз при езде вперёд и вверх при движении задним ходом.</string>
-    <string name="section_support">Поддержка</string>
-    <string name="support_hint">Motion Anchor — бесплатное приложение с открытым исходным кодом. Если оно помогает вам в дороге, вы можете поддержать разработку.</string>
-    <string name="support_action">Поддержать на Buy Me a Coffee</string>
-    <string name="link_open_error">Не удалось открыть ссылку.</string>
 </resources>

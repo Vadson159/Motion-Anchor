@@ -136,7 +136,6 @@ class MainActivity : Activity() {
         addAppearance()
         addTripAndSystem()
         addInterfaceSettings()
-        addSupport()
         refreshAppearance()
         refreshSession()
     }
@@ -318,14 +317,6 @@ class MainActivity : Activity() {
                 }
             }
         }.text = names[selected]
-        body.addView(card, gap(8))
-    }
-
-    private fun addSupport() {
-        section(R.string.section_support)
-        val card = panel()
-        card.addView(label(getString(R.string.support_hint), 14f, palette.secondary))
-        card.addView(action(getString(R.string.support_action)) { openLink(SUPPORT_URL) }, gap(10))
         body.addView(card, gap(8))
     }
 
@@ -739,14 +730,6 @@ class MainActivity : Activity() {
         false
     }
 
-    private fun openLink(url: String) {
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } catch (_: ActivityNotFoundException) {
-            displayMessage(R.string.link_open_error)
-        }
-    }
-
     private fun checkbox(title: Int, changed: (Boolean) -> Unit) = CheckBox(this).apply {
         text = getString(title)
         setTextColor(palette.text)
@@ -887,6 +870,5 @@ class MainActivity : Activity() {
         private const val REQUEST_LOCATION = 2
         private const val REQUEST_NOTIFICATIONS = 3
         private const val REQUEST_BACKGROUND_LOCATION = 4
-        private const val SUPPORT_URL = "https://buymeacoffee.com/vadson"
     }
 }

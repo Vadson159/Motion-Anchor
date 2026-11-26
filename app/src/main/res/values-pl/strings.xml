@@ -92,8 +92,4 @@
     <string name="frame_rate_invalid">Wpisz liczbę od 1 do %1$d.</string>
     <string name="forward_motion_label">Ruch do przodu i do tyłu</string>
     <string name="forward_motion_hint">Znaczniki przesuwają się w dół podczas jazdy do przodu i w górę przy cofaniu.</string>
-    <string name="section_support">Wsparcie</string>
-    <string name="support_hint">Motion Anchor jest darmową aplikacją open source. Jeśli pomaga Ci w podróży, możesz wesprzeć jej rozwój.</string>
-    <string name="support_action">Postaw mi kawę (Buy Me a Coffee)</string>
-    <string name="link_open_error">Nie udało się otworzyć linku.</string>
 </resources>
