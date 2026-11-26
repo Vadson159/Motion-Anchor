@@ -29,7 +29,9 @@ If Android shows "App not installed", uninstall any earlier Motion Anchor build 
 
 ## Support
 
-If you find Motion Anchor helpful, you can support its development on [Buy Me a Coffee](https://buymeacoffee.com/vadson).
+If you find Motion Anchor helpful, you can support its development:
+
+<a href="https://buymeacoffee.com/vadson" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48"></a>
 
 ## Credits and license
 
